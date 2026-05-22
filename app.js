@@ -48,18 +48,29 @@ async function refreshOpenSession() {
   renderRunningState()
 }
 
+function formatElapsed(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(h)}:${pad(m)}:${pad(s)}`
+}
+
 function renderRunningState() {
   clearInterval(warningTimer)
   warningEl.style.display = 'none'
 
   if (openSession) {
     const started = new Date(openSession.started_at)
-    statusEl.textContent = `Running since ${started.toLocaleString()}`
     startBtn.disabled = true
     stopBtn.disabled  = false
 
     const tick = () => {
-      const hours = (Date.now() - started.getTime()) / 3600000
+      const elapsedMs = Date.now() - started.getTime()
+      statusEl.textContent =
+        `Running for ${formatElapsed(elapsedMs)} (since ${started.toLocaleString()})`
+      const hours = elapsedMs / 3600000
       if (hours >= FORGOT_TO_STOP_HOURS) {
         warningEl.textContent =
           `Running for ${hours.toFixed(1)}h — did you forget to stop?`
@@ -67,7 +78,7 @@ function renderRunningState() {
       }
     }
     tick()
-    warningTimer = setInterval(tick, 60_000)
+    warningTimer = setInterval(tick, 1000)
   } else {
     statusEl.textContent = 'Not running'
     startBtn.disabled = false
