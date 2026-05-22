@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Time Tracker</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 480px;
+      margin: 4rem auto;
+      padding: 0 1rem;
+      line-height: 1.5;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+    h1 { margin: 0; font-size: 1.4rem; }
+    button {
+      padding: 0.6rem 1.2rem;
+      font-size: 1rem;
+      border-radius: 6px;
+      border: 1px solid #888;
+      background: transparent;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .primary { background: #2563eb; color: white; border-color: #2563eb; }
+    .row { display: flex; gap: 0.5rem; margin-top: 1.25rem; }
+    #status { margin-top: 1rem; color: #666; }
+    #warning {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      background: #fef3c7;
+      color: #92400e;
+      display: none;
+    }
+    #error {
+      margin-top: 1rem;
+      color: #b91c1c;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <section id="signed-out" hidden>
+    <h1>Time Tracker</h1>
+    <p>Sign in to start tracking.</p>
+    <button id="sign-in" class="primary">Sign in with Google</button>
+  </section>
+
+  <section id="signed-in" hidden>
+    <header>
+      <h1>Time Tracker</h1>
+      <button id="sign-out">Sign out</button>
+    </header>
+    <p>Signed in as <strong id="user-label"></strong></p>
+    <div class="row">
+      <button id="start" class="primary">Start</button>
+      <button id="stop">Stop</button>
+    </div>
+    <p id="status"></p>
+    <div id="warning"></div>
+    <p id="error"></p>
+  </section>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
