@@ -20,6 +20,7 @@ const signInBtn = $('sign-in')
 const signOutBtn = $('sign-out')
 
 let openSession = null
+let allSessions = []
 let warningTimer = null
 
 function showError(msg) {
@@ -31,21 +32,67 @@ function setBusy(busy) {
   stopBtn.disabled  = busy || !openSession
 }
 
-async function refreshOpenSession() {
+async function loadSessions() {
   const { data, error } = await supabase
     .from('sessions')
-    .select('id, started_at')
-    .is('ended_at', null)
+    .select('id, started_at, ended_at')
     .order('started_at', { ascending: false })
-    .limit(1)
 
   if (error) {
     showError(error.message)
     return
   }
 
-  openSession = data[0] ?? null
+  allSessions = data
+  openSession = data.find((s) => s.ended_at === null) ?? null
+  renderTotals()
   renderRunningState()
+}
+
+function startOfToday() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+function startOfWeek() {
+  // Monday as week start
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  const day = d.getDay()
+  const offset = day === 0 ? 6 : day - 1
+  d.setDate(d.getDate() - offset)
+  return d.getTime()
+}
+
+function startOfMonth() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  d.setDate(1)
+  return d.getTime()
+}
+
+function clippedMs(session, windowStart, windowEnd) {
+  const start = new Date(session.started_at).getTime()
+  const end = session.ended_at
+    ? new Date(session.ended_at).getTime()
+    : Date.now()
+  return Math.max(0, Math.min(end, windowEnd) - Math.max(start, windowStart))
+}
+
+function sumMs(windowStart, windowEnd) {
+  return allSessions.reduce(
+    (acc, s) => acc + clippedMs(s, windowStart, windowEnd),
+    0
+  )
+}
+
+function renderTotals() {
+  const upper = Date.now() + 1000
+  $('total-today').textContent = formatElapsed(sumMs(startOfToday(), upper))
+  $('total-week').textContent  = formatElapsed(sumMs(startOfWeek(),  upper))
+  $('total-month').textContent = formatElapsed(sumMs(startOfMonth(), upper))
+  $('total-all').textContent   = formatElapsed(sumMs(0,              upper))
 }
 
 function formatElapsed(ms) {
@@ -76,6 +123,7 @@ function renderRunningState() {
           `Running for ${hours.toFixed(1)}h — did you forget to stop?`
         warningEl.style.display = 'block'
       }
+      renderTotals()
     }
     tick()
     warningTimer = setInterval(tick, 1000)
@@ -99,7 +147,7 @@ async function render() {
   signedOut.hidden = true
   signedIn.hidden  = false
   userLabel.textContent = session.user.email ?? session.user.id
-  await refreshOpenSession()
+  await loadSessions()
 }
 
 signInBtn.addEventListener('click', async () => {
@@ -127,7 +175,7 @@ startBtn.addEventListener('click', async () => {
     // just re-read state.
     showError(error.message)
   }
-  await refreshOpenSession()
+  await loadSessions()
 })
 
 stopBtn.addEventListener('click', async () => {
@@ -139,7 +187,7 @@ stopBtn.addEventListener('click', async () => {
     .update({ ended_at: new Date().toISOString() })
     .is('ended_at', null)
   if (error) showError(error.message)
-  await refreshOpenSession()
+  await loadSessions()
 })
 
 supabase.auth.onAuthStateChange((_event, _session) => {

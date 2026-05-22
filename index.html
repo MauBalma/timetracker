@@ -45,6 +45,25 @@
       color: #b91c1c;
       min-height: 1.2em;
     }
+    table {
+      border-collapse: collapse;
+      margin-top: 1.5rem;
+      width: 100%;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #ddd;
+    }
+    td:last-child, th:last-child { text-align: right; }
+    th {
+      font-weight: 600;
+      color: #666;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
   </style>
 </head>
 <body>
@@ -67,6 +86,16 @@
     <p id="status"></p>
     <div id="warning"></div>
     <p id="error"></p>
+
+    <table>
+      <thead><tr><th>Period</th><th>Time</th></tr></thead>
+      <tbody>
+        <tr><td>Today</td>      <td id="total-today">—</td></tr>
+        <tr><td>This week</td>  <td id="total-week">—</td></tr>
+        <tr><td>This month</td> <td id="total-month">—</td></tr>
+        <tr><td>Total</td>      <td id="total-all">—</td></tr>
+      </tbody>
+    </table>
   </section>
 
   <script type="module" src="./app.js"></script>
