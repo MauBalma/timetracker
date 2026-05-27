@@ -34,6 +34,56 @@ create policy "delete own sessions"
   on public.sessions for delete
   using (auth.uid() = user_id);
 
+-- Admin allowlist. Anyone in this table can read every user's sessions.
+-- To bootstrap your first admin, find your user id in Supabase
+-- → Authentication → Users, then:
+--   insert into public.admins (user_id) values ('<your-uuid>');
+create table if not exists public.admins (
+  user_id uuid primary key references auth.users(id) on delete cascade
+);
+
+alter table public.admins enable row level security;
+
+-- Admins can see who else is an admin; non-admins see nothing.
+create policy "admins read admins"
+  on public.admins for select
+  using (exists (select 1 from public.admins a where a.user_id = auth.uid()));
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (select 1 from public.admins where user_id = auth.uid())
+$$;
+
+grant execute on function public.is_admin() to authenticated;
+
+-- Admins can read every user's sessions (in addition to the existing
+-- "read own sessions" policy). Policies are OR-ed.
+create policy "admins read all sessions"
+  on public.sessions for select
+  using (public.is_admin());
+
+-- Admins-only directory of users (id + email). Returns empty for non-admins
+-- so the client can call it unconditionally.
+create or replace function public.list_users()
+returns table (user_id uuid, email text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select u.id, u.email::text
+  from auth.users u
+  where public.is_admin()
+  order by u.email
+$$;
+
+grant execute on function public.list_users() to authenticated;
+
 -- Team rollup. Only counts closed sessions so a forgotten Start
 -- running for days doesn't pollute the totals.
 create or replace function public.get_team_hours(start_date timestamptz, end_date timestamptz)
