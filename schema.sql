@@ -84,6 +84,73 @@ $$;
 
 grant execute on function public.list_users() to authenticated;
 
+-- Audit log of UPDATEs and DELETEs on sessions. Append-only via trigger;
+-- no client can insert/update/delete rows here.
+create table if not exists public.sessions_history (
+  id bigserial primary key,
+  session_id uuid not null,
+  user_id uuid not null,
+  operation text not null check (operation in ('UPDATE', 'DELETE')),
+  changed_at timestamptz not null default now(),
+  changed_by uuid,
+  old_started_at timestamptz,
+  old_ended_at timestamptz,
+  new_started_at timestamptz,
+  new_ended_at timestamptz
+);
+
+create index if not exists sessions_history_session_idx
+  on public.sessions_history (session_id, changed_at desc);
+create index if not exists sessions_history_user_idx
+  on public.sessions_history (user_id, changed_at desc);
+
+alter table public.sessions_history enable row level security;
+
+create policy "users read own session history"
+  on public.sessions_history for select
+  using (auth.uid() = user_id);
+
+create policy "admins read all session history"
+  on public.sessions_history for select
+  using (public.is_admin());
+
+-- Trigger function runs as SECURITY DEFINER (table owner), so it can
+-- always write to sessions_history regardless of who triggered it.
+create or replace function public.log_session_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if (tg_op = 'UPDATE') then
+    -- Skip if nothing relevant changed.
+    if old.started_at is distinct from new.started_at
+       or old.ended_at is distinct from new.ended_at then
+      insert into public.sessions_history
+        (session_id, user_id, operation, changed_by,
+         old_started_at, old_ended_at, new_started_at, new_ended_at)
+      values
+        (old.id, old.user_id, 'UPDATE', auth.uid(),
+         old.started_at, old.ended_at, new.started_at, new.ended_at);
+    end if;
+  elsif (tg_op = 'DELETE') then
+    insert into public.sessions_history
+      (session_id, user_id, operation, changed_by,
+       old_started_at, old_ended_at, new_started_at, new_ended_at)
+    values
+      (old.id, old.user_id, 'DELETE', auth.uid(),
+       old.started_at, old.ended_at, null, null);
+  end if;
+  return null;
+end;
+$$;
+
+drop trigger if exists sessions_audit on public.sessions;
+create trigger sessions_audit
+  after update or delete on public.sessions
+  for each row execute function public.log_session_change();
+
 -- Team rollup. Only counts closed sessions so a forgotten Start
 -- running for days doesn't pollute the totals.
 create or replace function public.get_team_hours(start_date timestamptz, end_date timestamptz)
