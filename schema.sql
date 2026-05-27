@@ -30,6 +30,10 @@ create policy "update own sessions"
   on public.sessions for update
   using (auth.uid() = user_id);
 
+create policy "delete own sessions"
+  on public.sessions for delete
+  using (auth.uid() = user_id);
+
 -- Team rollup. Only counts closed sessions so a forgotten Start
 -- running for days doesn't pollute the totals.
 create or replace function public.get_team_hours(start_date timestamptz, end_date timestamptz)
