@@ -28,6 +28,11 @@ const weekPrevBtn = $('week-prev')
 const weekNextBtn = $('week-next')
 const weekTodayBtn = $('week-today')
 const teamTogglesEl = $('team-toggles')
+const teamStatsCard = $('team-stats-card')
+const teamPie = $('team-pie')
+const teamLegend = $('team-legend')
+const periodTabs = $('period-tabs')
+const excludeMeToggle = $('exclude-me-toggle')
 
 const PX_PER_HOUR = 40
 const PX_PER_MIN = PX_PER_HOUR / 60
@@ -46,6 +51,8 @@ let myUserId = null
 let isAdmin = false
 let users = []
 let enabledUsers = new Set()
+let teamPeriod = 'week'
+let excludeSelf = false
 
 function showError(msg) {
   errorEl.textContent = msg ?? ''
@@ -74,6 +81,7 @@ async function loadSessions() {
   renderRunningState()
   renderSessions()
   renderWeek()
+  renderTeamPie()
 }
 
 function startOfToday() {
@@ -157,6 +165,7 @@ function renderRunningState() {
       if (m !== lastMinute) {
         lastMinute = m
         renderWeek()
+        renderTeamPie()
       } else {
         renderNowLine()
       }
@@ -480,9 +489,9 @@ function renderNowLine() {
   dayCol.appendChild(line)
 }
 
-weekPrevBtn.addEventListener('click', () => { weekOffset -= 1; renderWeek() })
-weekNextBtn.addEventListener('click', () => { weekOffset += 1; renderWeek() })
-weekTodayBtn.addEventListener('click', () => { weekOffset = 0; renderWeek() })
+weekPrevBtn.addEventListener('click', () => { weekOffset -= 1; renderWeek(); renderTeamPie() })
+weekNextBtn.addEventListener('click', () => { weekOffset += 1; renderWeek(); renderTeamPie() })
+weekTodayBtn.addEventListener('click', () => { weekOffset = 0; renderWeek(); renderTeamPie() })
 
 weekBody.addEventListener('click', (e) => {
   const block = e.target.closest('.session-block')
@@ -560,6 +569,134 @@ teamTogglesEl.addEventListener('click', (e) => {
   else enabledUsers.add(id)
   renderTeamToggles()
   renderWeek()
+})
+
+function periodWindow(p) {
+  const upper = Date.now() + 1000
+  switch (p) {
+    case 'today': return [startOfToday(), upper]
+    case 'month': return [startOfMonth(), upper]
+    case 'all':   return [0, upper]
+    case 'week':
+    default: {
+      // Follow the currently navigated week in the week view.
+      const ws = weekStartDate()
+      const we = new Date(ws); we.setDate(ws.getDate() + 7)
+      return [ws.getTime(), Math.min(we.getTime(), upper)]
+    }
+  }
+}
+
+function formatHours(ms) {
+  if (ms < 60000) return '0m'
+  const h = ms / 3600000
+  if (h < 1) return `${Math.round(ms / 60000)}m`
+  if (h < 10) return `${h.toFixed(1)}h`
+  return `${Math.round(h)}h`
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+function svgEl(tag, attrs = {}) {
+  const el = document.createElementNS(SVG_NS, tag)
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+  return el
+}
+
+function renderTeamPie() {
+  if (!isAdmin || users.length === 0) {
+    teamStatsCard.hidden = true
+    return
+  }
+  teamStatsCard.hidden = false
+
+  const [winStart, winEnd] = periodWindow(teamPeriod)
+  const totals = new Map()
+  for (const s of teamSessions) {
+    if (excludeSelf && s.user_id === myUserId) continue
+    const ms = clippedMs(s, winStart, winEnd)
+    if (ms <= 0) continue
+    totals.set(s.user_id, (totals.get(s.user_id) ?? 0) + ms)
+  }
+  const entries = [...totals.entries()].sort((a, b) => b[1] - a[1])
+  const totalMs = entries.reduce((acc, [, ms]) => acc + ms, 0)
+
+  teamPie.innerHTML = ''
+  if (totalMs === 0) {
+    teamPie.appendChild(svgEl('circle', {
+      cx: 50, cy: 50, r: 38, class: 'team-pie-empty'
+    }))
+  } else if (entries.length === 1) {
+    const [userId] = entries[0]
+    teamPie.appendChild(svgEl('circle', {
+      cx: 50, cy: 50, r: 38,
+      fill: colorForUser(userId) ?? 'var(--primary)',
+      class: 'team-pie-slice'
+    }))
+  } else {
+    const r = 38
+    let cum = -Math.PI / 2
+    for (const [userId, ms] of entries) {
+      const frac = ms / totalMs
+      const angle = frac * Math.PI * 2
+      const x1 = 50 + r * Math.cos(cum)
+      const y1 = 50 + r * Math.sin(cum)
+      const x2 = 50 + r * Math.cos(cum + angle)
+      const y2 = 50 + r * Math.sin(cum + angle)
+      const large = angle > Math.PI ? 1 : 0
+      const path = svgEl('path', {
+        d: `M 50 50 L ${x1.toFixed(3)} ${y1.toFixed(3)} ` +
+           `A ${r} ${r} 0 ${large} 1 ${x2.toFixed(3)} ${y2.toFixed(3)} Z`,
+        fill: colorForUser(userId) ?? 'var(--primary)',
+        class: 'team-pie-slice'
+      })
+      const title = svgEl('title')
+      title.textContent =
+        `${userId === myUserId ? 'Me' : userEmail(userId)}\n` +
+        `${formatHours(ms)} (${(frac * 100).toFixed(1)}%)`
+      path.appendChild(title)
+      teamPie.appendChild(path)
+      cum += angle
+    }
+  }
+  // Center label with total
+  const total = svgEl('text', { x: 50, y: 51, class: 'pie-total' })
+  total.textContent = totalMs === 0 ? '—' : formatHours(totalMs)
+  teamPie.appendChild(total)
+  const sub = svgEl('text', { x: 50, y: 58, class: 'pie-total-sub' })
+  sub.textContent = 'total'
+  teamPie.appendChild(sub)
+
+  teamLegend.innerHTML = ''
+  if (entries.length === 0) {
+    const li = document.createElement('li')
+    li.innerHTML = '<span class="empty">No sessions in this period</span>'
+    teamLegend.appendChild(li)
+    return
+  }
+  for (const [userId, ms] of entries) {
+    const isMe = userId === myUserId
+    const li = document.createElement('li')
+    li.innerHTML =
+      `<span class="swatch" style="background: ${colorForUser(userId)}"></span>` +
+      `<span>${isMe ? 'Me' : userEmail(userId)}</span>` +
+      `<span class="hours">${formatHours(ms)}</span>` +
+      `<span class="pct">${(ms / totalMs * 100).toFixed(1)}%</span>`
+    teamLegend.appendChild(li)
+  }
+}
+
+periodTabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-period]')
+  if (!btn) return
+  teamPeriod = btn.dataset.period
+  periodTabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn))
+  renderTeamPie()
+})
+
+excludeMeToggle.addEventListener('click', () => {
+  excludeSelf = !excludeSelf
+  excludeMeToggle.classList.toggle('on', excludeSelf)
+  renderTeamPie()
 })
 
 async function render() {

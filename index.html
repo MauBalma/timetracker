@@ -355,6 +355,96 @@
       background: var(--surface-2);
       border-color: var(--text-muted);
     }
+
+    /* Team stats / pie */
+    .team-controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .toggle-pill {
+      padding: 0.25rem 0.65rem;
+      font-size: 0.8rem;
+    }
+    .toggle-pill.on {
+      background: var(--surface-2);
+      border-color: var(--text-muted);
+      color: var(--text);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+    }
+    .toggle-pill.on::before {
+      content: '✓ ';
+      color: var(--text-muted);
+    }
+    .period-tabs { display: flex; gap: 0.25rem; }
+    .period-tabs button {
+      padding: 0.25rem 0.6rem;
+      font-size: 0.8rem;
+    }
+    .period-tabs button.on {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--primary-text);
+    }
+    .pie-wrap {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .pie-wrap svg { flex: 0 0 auto; display: block; }
+    .team-pie-slice { stroke: var(--surface); stroke-width: 0.5; }
+    .team-pie-empty { fill: none; stroke: var(--border); stroke-width: 2; }
+    .pie-total {
+      fill: var(--text);
+      font-size: 11px;
+      font-weight: 600;
+      text-anchor: middle;
+      font-family: inherit;
+    }
+    .pie-total-sub {
+      fill: var(--text-subtle);
+      font-size: 5px;
+      text-anchor: middle;
+      font-family: inherit;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .team-legend {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      flex: 1;
+      min-width: 200px;
+      font-size: 0.9rem;
+    }
+    .team-legend li {
+      display: grid;
+      grid-template-columns: 14px 1fr auto 3.5em;
+      gap: 0.6rem;
+      align-items: center;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .team-legend li:last-child { border-bottom: none; }
+    .team-legend .swatch { width: 12px; height: 12px; border-radius: 3px; }
+    .team-legend .hours {
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .team-legend .pct {
+      color: var(--text-subtle);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .team-legend .empty {
+      grid-column: 1 / -1;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 1rem 0;
+    }
     .session-block .block-time { font-weight: 600; }
     .session-block .block-dur { opacity: 0.8; }
     .now-line {
@@ -451,6 +541,25 @@
         <div class="week-body-scroll" id="week-scroll">
           <div class="week-body" id="week-body"></div>
         </div>
+      </div>
+    </div>
+
+    <div class="card" id="team-stats-card" hidden>
+      <div class="section-header">
+        <h2>Team hours</h2>
+        <div class="team-controls">
+          <button id="exclude-me-toggle" class="small toggle-pill" title="Exclude my sessions from the chart">Exclude me</button>
+          <div class="period-tabs" id="period-tabs">
+            <button data-period="today">Today</button>
+            <button data-period="week" class="on">Week</button>
+            <button data-period="month">Month</button>
+            <button data-period="all">All</button>
+          </div>
+        </div>
+      </div>
+      <div class="pie-wrap">
+        <svg id="team-pie" viewBox="0 0 100 100" width="180" height="180" aria-label="Team hours pie chart"></svg>
+        <ul class="team-legend" id="team-legend"></ul>
       </div>
     </div>
 
