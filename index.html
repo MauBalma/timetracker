@@ -294,25 +294,67 @@
       position: absolute;
       left: 2px;
       right: 2px;
-      background: rgba(37, 99, 235, 0.18);
-      border: 1px solid var(--primary);
+      background: color-mix(in srgb, var(--block-color, var(--primary)) 18%, transparent);
+      border: 1px solid var(--block-color, var(--primary));
       border-radius: 4px;
       padding: 2px 5px;
       font-size: 0.7rem;
-      color: var(--primary);
+      color: var(--block-color, var(--primary));
       overflow: hidden;
       cursor: pointer;
       box-sizing: border-box;
       line-height: 1.2;
       transition: background 0.12s;
     }
-    .session-block:hover { background: rgba(37, 99, 235, 0.32); }
-    .session-block.running {
-      background: rgba(22, 163, 74, 0.15);
-      border: 1px dashed var(--running-text);
-      color: var(--running-text);
+    .session-block:hover {
+      background: color-mix(in srgb, var(--block-color, var(--primary)) 32%, transparent);
     }
-    .session-block.running:hover { background: rgba(22, 163, 74, 0.28); }
+    .session-block.running {
+      background: color-mix(in srgb, var(--block-color, var(--running-text)) 15%, transparent);
+      border: 1px dashed var(--block-color, var(--running-text));
+      color: var(--block-color, var(--running-text));
+    }
+    .session-block.running:hover {
+      background: color-mix(in srgb, var(--block-color, var(--running-text)) 28%, transparent);
+    }
+    .session-block.readonly { cursor: default; }
+
+    .team-toggles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin: 0 0 0.6rem;
+    }
+    .team-toggles[hidden] { display: none; }
+    .team-toggle {
+      padding: 0.2rem 0.65rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border-radius: 999px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .team-toggle .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--user-color, var(--text-subtle));
+    }
+    .team-toggle.on {
+      background: color-mix(in srgb, var(--user-color, var(--primary)) 14%, var(--surface));
+      border-color: var(--user-color, var(--primary));
+      color: var(--text);
+    }
+    .team-toggle:hover:not(.on) {
+      background: var(--surface-2);
+      border-color: var(--text-muted);
+    }
     .session-block .block-time { font-weight: 600; }
     .session-block .block-dur { opacity: 0.8; }
     .now-line {
@@ -403,6 +445,7 @@
         </div>
       </div>
       <p id="week-label" class="week-label"></p>
+      <div class="team-toggles" id="team-toggles" hidden></div>
       <div class="week-grid">
         <div class="week-headers" id="week-headers"></div>
         <div class="week-body-scroll" id="week-scroll">

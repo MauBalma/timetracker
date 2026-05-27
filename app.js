@@ -27,18 +27,25 @@ const weekLabel = $('week-label')
 const weekPrevBtn = $('week-prev')
 const weekNextBtn = $('week-next')
 const weekTodayBtn = $('week-today')
+const teamTogglesEl = $('team-toggles')
 
 const PX_PER_HOUR = 40
 const PX_PER_MIN = PX_PER_HOUR / 60
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const USER_HUES = [220, 145, 30, 280, 350, 195, 95, 320]
 
 let openSession = null
-let allSessions = []
+let mySessions = []
+let teamSessions = []
 let warningTimer = null
 let editingId = null
 let addingNew = false
 let weekOffset = 0
 let weekInitialScrollDone = false
+let myUserId = null
+let isAdmin = false
+let users = []
+let enabledUsers = new Set()
 
 function showError(msg) {
   errorEl.textContent = msg ?? ''
@@ -52,7 +59,7 @@ function setBusy(busy) {
 async function loadSessions() {
   const { data, error } = await supabase
     .from('sessions')
-    .select('id, started_at, ended_at')
+    .select('id, started_at, ended_at, user_id')
     .order('started_at', { ascending: false })
 
   if (error) {
@@ -60,8 +67,9 @@ async function loadSessions() {
     return
   }
 
-  allSessions = data
-  openSession = data.find((s) => s.ended_at === null) ?? null
+  teamSessions = data
+  mySessions = data.filter((s) => s.user_id === myUserId)
+  openSession = mySessions.find((s) => s.ended_at === null) ?? null
   renderTotals()
   renderRunningState()
   renderSessions()
@@ -100,7 +108,7 @@ function clippedMs(session, windowStart, windowEnd) {
 }
 
 function sumMs(windowStart, windowEnd) {
-  return allSessions.reduce(
+  return mySessions.reduce(
     (acc, s) => acc + clippedMs(s, windowStart, windowEnd),
     0
   )
@@ -207,7 +215,7 @@ function renderSessions() {
     sessionsBody.appendChild(tr)
   }
 
-  for (const s of allSessions) {
+  for (const s of mySessions) {
     const tr = document.createElement('tr')
     const isRunning = s.ended_at === null
     if (editingId === s.id) {
@@ -406,8 +414,11 @@ function renderWeek() {
     col.classList.toggle('today', isSameDay(day, now))
   })
 
-  for (const s of allSessions) {
+  const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+  for (const s of teamSessions) {
+    if (isAdmin && !enabledUsers.has(s.user_id)) continue
     const isRunning = s.ended_at === null
+    const isMine = s.user_id === myUserId
     const segments = splitSessionByDay(s, weekStart, weekEnd)
     for (const seg of segments) {
       const segDay = new Date(seg.start)
@@ -417,14 +428,19 @@ function renderWeek() {
       const topMin = (seg.start - segDay) / 60000
       const heightMin = Math.max((seg.end - seg.start) / 60000, 0.5)
       const block = document.createElement('div')
-      block.className = 'session-block' + (isRunning ? ' running' : '')
+      let cls = 'session-block'
+      if (isRunning) cls += ' running'
+      if (!isMine) cls += ' readonly'
+      block.className = cls
       block.style.top = `${topMin * PX_PER_MIN}px`
       block.style.height = `${Math.max(heightMin * PX_PER_MIN, 14)}px`
       block.dataset.id = s.id
+      const color = colorForUser(s.user_id)
+      if (color) block.style.setProperty('--block-color', color)
+      const who = isMine ? '' : `${userEmail(s.user_id)}\n`
       const fullStart = sessionDateFmt.format(new Date(s.started_at))
       const fullEnd = s.ended_at ? sessionDateFmt.format(new Date(s.ended_at)) : 'running'
-      block.title = `${fullStart} → ${fullEnd}`
-      const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+      block.title = `${who}${fullStart} → ${fullEnd}`
       const totalMs = (s.ended_at ? new Date(s.ended_at) : new Date()) - new Date(s.started_at)
       block.innerHTML =
         `<div class="block-time">${timeFmt.format(new Date(s.started_at))}</div>` +
@@ -472,6 +488,8 @@ weekBody.addEventListener('click', (e) => {
   const block = e.target.closest('.session-block')
   if (!block) return
   const id = block.dataset.id
+  const s = teamSessions.find((x) => x.id === id)
+  if (!s || s.user_id !== myUserId) return
   editingId = id
   renderSessions()
   const row = sessionsBody.querySelector(`button[data-id="${id}"]`)?.closest('tr')
@@ -481,6 +499,67 @@ weekBody.addEventListener('click', (e) => {
     void row.offsetWidth // restart animation
     row.classList.add('flash')
   }
+})
+
+function colorForUser(userId) {
+  if (!isAdmin) return null
+  const idx = users.findIndex((u) => u.user_id === userId)
+  const hue = USER_HUES[(idx < 0 ? 0 : idx) % USER_HUES.length]
+  return `hsl(${hue}, 70%, 50%)`
+}
+
+function userEmail(userId) {
+  return users.find((u) => u.user_id === userId)?.email ?? userId
+}
+
+async function loadAdminMeta() {
+  isAdmin = false
+  users = []
+  try {
+    const { data } = await supabase.rpc('is_admin')
+    if (data === true) isAdmin = true
+  } catch (_) { /* function may not exist yet */ }
+
+  if (isAdmin) {
+    const { data, error } = await supabase.rpc('list_users')
+    if (!error && Array.isArray(data)) {
+      users = data
+      if (enabledUsers.size === 0) enabledUsers = new Set([myUserId])
+    }
+  } else {
+    enabledUsers = new Set()
+  }
+  renderTeamToggles()
+}
+
+function renderTeamToggles() {
+  if (!isAdmin || users.length === 0) {
+    teamTogglesEl.hidden = true
+    teamTogglesEl.innerHTML = ''
+    return
+  }
+  teamTogglesEl.hidden = false
+  teamTogglesEl.innerHTML = ''
+  for (const u of users) {
+    const isMe = u.user_id === myUserId
+    const on = enabledUsers.has(u.user_id)
+    const btn = document.createElement('button')
+    btn.className = 'team-toggle' + (on ? ' on' : '')
+    btn.style.setProperty('--user-color', colorForUser(u.user_id))
+    btn.dataset.userId = u.user_id
+    btn.innerHTML = `<span class="dot"></span>${isMe ? 'Me' : u.email}`
+    teamTogglesEl.appendChild(btn)
+  }
+}
+
+teamTogglesEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.team-toggle')
+  if (!btn) return
+  const id = btn.dataset.userId
+  if (enabledUsers.has(id)) enabledUsers.delete(id)
+  else enabledUsers.add(id)
+  renderTeamToggles()
+  renderWeek()
 })
 
 async function render() {
@@ -496,6 +575,8 @@ async function render() {
   signedOut.hidden = true
   signedIn.hidden  = false
   userLabel.textContent = session.user.email ?? session.user.id
+  myUserId = session.user.id
+  await loadAdminMeta()
   await loadSessions()
 }
 
