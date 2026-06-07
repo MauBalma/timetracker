@@ -205,7 +205,10 @@
       width: 1%; /* shrink-to-fit so dates get the space */
     }
     table.sessions td.actions button + button { margin-left: 0.25rem; }
-    table.sessions input[type="datetime-local"] {
+    .dt-edit { display: inline-flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+    .dt-edit .dt-time { display: inline-flex; align-items: center; gap: 0.15rem; }
+    .dt-edit input,
+    .dt-edit select {
       font: inherit;
       font-size: 0.85rem;
       padding: 0.25rem 0.35rem;
@@ -214,6 +217,8 @@
       background: var(--surface);
       color: var(--text);
     }
+    .dt-edit .dt-num { width: 2.75rem; text-align: center; }
+    .dt-edit .dt-sep { color: var(--text-muted); }
 
     /* Week view */
     .week-nav { display: flex; gap: 0.25rem; align-items: center; }
