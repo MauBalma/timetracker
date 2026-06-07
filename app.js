@@ -179,18 +179,63 @@ function renderRunningState() {
   }
 }
 
-function toLocalInput(iso) {
+// --- Date/time editor -------------------------------------------------------
+// Native <input type="datetime-local"> is inconsistent across browsers: on
+// Firefox the pop-up only edits the date (time must be typed into fields many
+// users never find), and whether AM/PM shows at all is dictated by the OS
+// locale, not the page. So we build the editor from explicit controls: a
+// native date picker plus 12-hour hour/minute/second number fields and an
+// AM/PM select. This guarantees an editable, AM/PM time in every browser.
+
+function dtParts(iso) {
   const d = new Date(iso)
   const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-         `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  const h24 = d.getHours()
+  let h12 = h24 % 12
+  if (h12 === 0) h12 = 12
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    hour: h12,
+    min: d.getMinutes(),
+    sec: d.getSeconds(),
+    ampm: h24 < 12 ? 'AM' : 'PM'
+  }
 }
 
-function fromLocalInput(value) {
-  if (!value) return null
-  const d = new Date(value)
-  if (isNaN(d.getTime())) return null
-  return d.toISOString()
+function dateTimeEditor(field, iso) {
+  const p = dtParts(iso ?? new Date().toISOString())
+  const pad = (n) => String(n).padStart(2, '0')
+  return `<span class="dt-edit" data-field="${field}">
+      <input type="date" class="dt-date" data-dt="date" value="${p.date}">
+      <span class="dt-time">
+        <input type="number" class="dt-num" data-dt="hour" min="1" max="12" value="${p.hour}">
+        <span class="dt-sep">:</span>
+        <input type="number" class="dt-num" data-dt="min" min="0" max="59" value="${pad(p.min)}">
+        <span class="dt-sep">:</span>
+        <input type="number" class="dt-num" data-dt="sec" min="0" max="59" value="${pad(p.sec)}">
+        <select class="dt-ampm" data-dt="ampm">
+          <option${p.ampm === 'AM' ? ' selected' : ''}>AM</option>
+          <option${p.ampm === 'PM' ? ' selected' : ''}>PM</option>
+        </select>
+      </span>
+    </span>`
+}
+
+// Read one .dt-edit group back into an ISO string, or null if invalid/empty.
+function readDateTime(scope) {
+  if (!scope) return null
+  const dateStr = scope.querySelector('[data-dt="date"]').value
+  let hour = parseInt(scope.querySelector('[data-dt="hour"]').value, 10)
+  const min = parseInt(scope.querySelector('[data-dt="min"]').value, 10)
+  const sec = parseInt(scope.querySelector('[data-dt="sec"]').value, 10) || 0
+  const ampm = scope.querySelector('[data-dt="ampm"]').value
+  if (!dateStr || isNaN(hour) || isNaN(min)) return null
+  if (hour < 1 || hour > 12 || min < 0 || min > 59 || sec < 0 || sec > 59) return null
+  if (ampm === 'PM' && hour !== 12) hour += 12
+  if (ampm === 'AM' && hour === 12) hour = 0
+  const [y, mo, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, mo - 1, d, hour, min, sec)
+  return isNaN(dt.getTime()) ? null : dt.toISOString()
 }
 
 const sessionDateFmt = new Intl.DateTimeFormat(undefined, {
@@ -212,10 +257,9 @@ function renderSessions() {
 
   if (addingNew) {
     const tr = document.createElement('tr')
-    const now = toLocalInput(new Date().toISOString())
     tr.innerHTML = `
-      <td><input type="datetime-local" step="1" id="new-start" value="${now}"></td>
-      <td><input type="datetime-local" step="1" id="new-end"   value="${now}"></td>
+      <td>${dateTimeEditor('start', null)}</td>
+      <td>${dateTimeEditor('end', null)}</td>
       <td>—</td>
       <td class="actions">
         <button class="small primary" data-action="save-new">Save</button>
@@ -228,14 +272,12 @@ function renderSessions() {
     const tr = document.createElement('tr')
     const isRunning = s.ended_at === null
     if (editingId === s.id) {
-      const startVal = toLocalInput(s.started_at)
-      const endVal = isRunning ? '' : toLocalInput(s.ended_at)
       tr.innerHTML = `
-        <td><input type="datetime-local" step="1" data-field="start" value="${startVal}"></td>
+        <td>${dateTimeEditor('start', s.started_at)}</td>
         <td>${
           isRunning
             ? '<em title="Use the Stop button to close this session">(running)</em>'
-            : `<input type="datetime-local" step="1" data-field="end" value="${endVal}">`
+            : dateTimeEditor('end', s.ended_at)
         }</td>
         <td>${durationText(s)}</td>
         <td class="actions">
@@ -279,16 +321,16 @@ sessionsBody.addEventListener('click', async (e) => {
   }
   if (action === 'save') {
     const row = btn.closest('tr')
-    const startIso = fromLocalInput(row.querySelector('[data-field="start"]').value)
-    const endInput = row.querySelector('[data-field="end"]')
-    const endIso = endInput ? fromLocalInput(endInput.value) : null
-    if (!startIso) { showError('Start time is required.'); return }
-    if (endInput && !endIso) { showError('End time is required.'); return }
+    const endScope = row.querySelector('.dt-edit[data-field="end"]')
+    const startIso = readDateTime(row.querySelector('.dt-edit[data-field="start"]'))
+    const endIso = readDateTime(endScope)
+    if (!startIso) { showError('Enter a valid start date and time.'); return }
+    if (endScope && !endIso) { showError('Enter a valid end date and time.'); return }
     if (endIso && new Date(endIso) < new Date(startIso)) {
       showError('End must be on or after start.'); return
     }
     showError('')
-    const patch = endInput
+    const patch = endScope
       ? { started_at: startIso, ended_at: endIso }
       : { started_at: startIso }
     const { error } = await supabase.from('sessions').update(patch).eq('id', id)
@@ -307,9 +349,11 @@ sessionsBody.addEventListener('click', async (e) => {
     return
   }
   if (action === 'save-new') {
-    const startIso = fromLocalInput($('new-start').value)
-    const endIso   = fromLocalInput($('new-end').value)
-    if (!startIso || !endIso) { showError('Both start and end are required.'); return }
+    const row = btn.closest('tr')
+    const startIso = readDateTime(row.querySelector('.dt-edit[data-field="start"]'))
+    const endIso   = readDateTime(row.querySelector('.dt-edit[data-field="end"]'))
+    if (!startIso) { showError('Enter a valid start date and time.'); return }
+    if (!endIso)   { showError('Enter a valid end date and time.'); return }
     if (new Date(endIso) < new Date(startIso)) {
       showError('End must be on or after start.'); return
     }
