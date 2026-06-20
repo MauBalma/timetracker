@@ -475,6 +475,60 @@
       100% { background: transparent; }
     }
 
+    /* Upcoming dates / countdown */
+    .dates-list { list-style: none; margin: 0; padding: 0; }
+    .date-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .date-item:last-child { border-bottom: none; }
+    .date-main { display: flex; flex-direction: column; min-width: 0; }
+    .date-label { font-weight: 600; }
+    .date-when { color: var(--text-muted); font-size: 0.85rem; }
+    .date-right { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+    .countdown {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      font-size: 0.9rem;
+      padding: 0.15rem 0.65rem;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .countdown.future {
+      background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+      color: var(--danger);
+      font-weight: 500;
+    }
+    .countdown.soon {
+      background: var(--warning-bg);
+      color: var(--warning-text);
+    }
+    .countdown.today {
+      background: var(--running-bg);
+      color: var(--running-text);
+    }
+    .countdown.past { background: var(--surface-2); color: var(--text-subtle); }
+    .date-empty { color: var(--text-muted); text-align: center; padding: 1rem 0; }
+    .date-edit { display: flex; gap: 0.4rem; flex-wrap: wrap; flex: 1; }
+    .date-edit input {
+      font: inherit;
+      font-size: 0.9rem;
+      padding: 0.3rem 0.45rem;
+      border: 1px solid var(--border-strong);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--text);
+    }
+    .date-edit .date-label-input { flex: 1; min-width: 160px; }
+    .date-actions button + button { margin-left: 0.25rem; }
+
     .running-tag {
       display: inline-block;
       margin-left: 0.5rem;
@@ -505,6 +559,14 @@
       <button id="sign-out" class="small">Sign out</button>
     </header>
     <p class="user-line">Signed in as <strong id="user-label"></strong></p>
+
+    <div class="card" id="dates-card">
+      <div class="section-header">
+        <h2>Upcoming dates</h2>
+        <button id="add-date" class="small" hidden>Add date</button>
+      </div>
+      <ul class="dates-list" id="dates-list"></ul>
+    </div>
 
     <div class="card">
       <div class="controls-row">
