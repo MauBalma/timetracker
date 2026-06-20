@@ -151,6 +151,44 @@ create trigger sessions_audit
   after update or delete on public.sessions
   for each row execute function public.log_session_change();
 
+-- Key dates / milestones. Admins add target dates (deadlines, launches, etc.);
+-- every signed-in user sees a countdown of how long until each one.
+create table if not exists public.milestones (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  target_date date not null,
+  created_by uuid references auth.users(id) on delete set null default auth.uid(),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists milestones_target_date_idx
+  on public.milestones (target_date);
+
+alter table public.milestones enable row level security;
+
+-- Anyone signed in can read the dates (team-wide countdown).
+create policy "authenticated read milestones"
+  on public.milestones for select
+  to authenticated
+  using (true);
+
+-- Only admins can add / change / remove dates.
+create policy "admins insert milestones"
+  on public.milestones for insert
+  to authenticated
+  with check (public.is_admin());
+
+create policy "admins update milestones"
+  on public.milestones for update
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+create policy "admins delete milestones"
+  on public.milestones for delete
+  to authenticated
+  using (public.is_admin());
+
 -- Team rollup. Only counts closed sessions so a forgotten Start
 -- running for days doesn't pollute the totals.
 create or replace function public.get_team_hours(start_date timestamptz, end_date timestamptz)

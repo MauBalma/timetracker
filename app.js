@@ -33,6 +33,8 @@ const teamPie = $('team-pie')
 const teamLegend = $('team-legend')
 const periodTabs = $('period-tabs')
 const excludeMeToggle = $('exclude-me-toggle')
+const datesList = $('dates-list')
+const addDateBtn = $('add-date')
 
 const PX_PER_HOUR = 40
 const PX_PER_MIN = PX_PER_HOUR / 60
@@ -53,6 +55,9 @@ let users = []
 let enabledUsers = new Set()
 let teamPeriod = 'week'
 let excludeSelf = false
+let milestones = []
+let editingDateId = null
+let addingDate = false
 
 function showError(msg) {
   errorEl.textContent = msg ?? ''
@@ -743,6 +748,178 @@ excludeMeToggle.addEventListener('click', () => {
   renderTeamPie()
 })
 
+// --- Upcoming dates / countdown --------------------------------------------
+// Admins add target dates; every signed-in user sees how long until each.
+
+const dateFmt = new Intl.DateTimeFormat(undefined, {
+  weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+})
+
+// 'YYYY-MM-DD' (a calendar date, no time) → local Date at midnight.
+function parseDateOnly(str) {
+  const [y, m, d] = str.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+// Whole calendar days from today (local) to the target date.
+function daysUntil(targetDateStr) {
+  const target = parseDateOnly(targetDateStr)
+  target.setHours(0, 0, 0, 0)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((target - today) / 86400000)
+}
+
+function pluralWeeks(weeks) {
+  const rounded = weeks % 1 === 0 ? weeks : Number(weeks.toFixed(1))
+  return `${rounded} week${rounded === 1 ? '' : 's'}`
+}
+
+function countdownText(targetDateStr) {
+  const days = daysUntil(targetDateStr)
+  if (days === 0) return { text: 'Today', cls: 'today' }
+  if (days < 0) {
+    const ago = -days
+    return { text: `${ago} day${ago === 1 ? '' : 's'} ago`, cls: 'past' }
+  }
+  const dayPart = `${days} day${days === 1 ? '' : 's'} left`
+  const weekPart = days >= 7 ? ` · ${pluralWeeks(days / 7)}` : ''
+  return { text: dayPart + weekPart, cls: days <= 7 ? 'soon' : 'future' }
+}
+
+async function loadMilestones() {
+  const { data, error } = await supabase
+    .from('milestones')
+    .select('id, label, target_date')
+    .order('target_date', { ascending: true })
+
+  if (error) {
+    // Table may not exist yet (migration not applied). Don't break the app.
+    console.warn('Could not load milestones:', error.message)
+    milestones = []
+  } else {
+    milestones = data ?? []
+  }
+  renderDates()
+}
+
+function dateDisplayRow(m) {
+  const li = document.createElement('li')
+  li.className = 'date-item'
+  const cd = countdownText(m.target_date)
+  li.innerHTML = `
+    <div class="date-main">
+      <span class="date-label"></span>
+      <span class="date-when"></span>
+    </div>
+    <div class="date-right">
+      <span class="countdown ${cd.cls}">${cd.text}</span>
+      ${isAdmin ? `
+        <span class="date-actions">
+          <button class="small" data-date-action="edit" data-id="${m.id}">Edit</button>
+          <button class="small danger" data-date-action="delete" data-id="${m.id}">Delete</button>
+        </span>` : ''}
+    </div>`
+  // textContent (not innerHTML) so labels can't inject markup.
+  li.querySelector('.date-label').textContent = m.label
+  li.querySelector('.date-when').textContent = dateFmt.format(parseDateOnly(m.target_date))
+  return li
+}
+
+function todayStr() {
+  const d = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function dateEditorRow(m) {
+  const li = document.createElement('li')
+  li.className = 'date-item editing'
+  const isNew = !m
+  li.innerHTML = `
+    <div class="date-edit">
+      <input type="text" class="date-label-input" placeholder="Label (e.g. Project deadline)">
+      <input type="date" class="date-date-input">
+    </div>
+    <div class="date-right">
+      <button class="small primary" data-date-action="${isNew ? 'save-new' : 'save'}"${isNew ? '' : ` data-id="${m.id}"`}>Save</button>
+      <button class="small" data-date-action="${isNew ? 'cancel-new' : 'cancel'}">Cancel</button>
+    </div>`
+  // Set values via properties to avoid HTML-escaping the label.
+  li.querySelector('.date-label-input').value = m ? m.label : ''
+  li.querySelector('.date-date-input').value = m ? m.target_date : todayStr()
+  return li
+}
+
+function renderDates() {
+  if (!datesList) return
+  addDateBtn.hidden = !isAdmin
+  datesList.innerHTML = ''
+
+  if (addingDate) datesList.appendChild(dateEditorRow(null))
+
+  if (milestones.length === 0 && !addingDate) {
+    const li = document.createElement('li')
+    li.className = 'date-empty'
+    li.textContent = isAdmin
+      ? 'No dates yet — click “Add date” to create one.'
+      : 'No upcoming dates.'
+    datesList.appendChild(li)
+    return
+  }
+
+  for (const m of milestones) {
+    datesList.appendChild(editingDateId === m.id ? dateEditorRow(m) : dateDisplayRow(m))
+  }
+}
+
+addDateBtn.addEventListener('click', () => {
+  addingDate = true
+  editingDateId = null
+  renderDates()
+})
+
+datesList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-date-action]')
+  if (!btn) return
+  const action = btn.dataset.dateAction
+  const id = btn.dataset.id
+
+  if (action === 'edit') { editingDateId = id; addingDate = false; renderDates(); return }
+  if (action === 'cancel') { editingDateId = null; renderDates(); return }
+  if (action === 'cancel-new') { addingDate = false; renderDates(); return }
+
+  if (action === 'save' || action === 'save-new') {
+    const li = btn.closest('li')
+    const label = li.querySelector('.date-label-input').value.trim()
+    const dateStr = li.querySelector('.date-date-input').value
+    if (!label) { showError('Enter a label for the date.'); return }
+    if (!dateStr) { showError('Pick a target date.'); return }
+    showError('')
+    if (action === 'save-new') {
+      const { error } = await supabase.from('milestones').insert({ label, target_date: dateStr })
+      if (error) { showError(error.message); return }
+      addingDate = false
+    } else {
+      const { error } = await supabase.from('milestones').update({ label, target_date: dateStr }).eq('id', id)
+      if (error) { showError(error.message); return }
+      editingDateId = null
+    }
+    await loadMilestones()
+    return
+  }
+
+  if (action === 'delete') {
+    if (!confirm('Delete this date?')) return
+    showError('')
+    const { error } = await supabase.from('milestones').delete().eq('id', id)
+    if (error) { showError(error.message); return }
+    if (editingDateId === id) editingDateId = null
+    await loadMilestones()
+    return
+  }
+})
+
 async function render() {
   showError('')
   const { data: { session } } = await supabase.auth.getSession()
@@ -759,6 +936,7 @@ async function render() {
   myUserId = session.user.id
   await loadAdminMeta()
   await loadSessions()
+  await loadMilestones()
 }
 
 signInBtn.addEventListener('click', async () => {
