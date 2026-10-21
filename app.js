@@ -40,6 +40,11 @@ const PX_PER_HOUR = 40
 const PX_PER_MIN = PX_PER_HOUR / 60
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const USER_HUES = [220, 145, 30, 280, 350, 195, 95, 320]
+const SNAP_MIN = 15          // week-view edits snap to this grid; hold Alt for 1-minute precision
+const DEFAULT_NEW_MIN = 60   // length of a session created by a plain click
+const MIN_SESSION_MS = 60000
+const DRAG_THRESHOLD_PX = 4
+const NEW_ID = '__new__'     // placeholder id for a session being created in the week view
 
 let openSession = null
 let mySessions = []
@@ -58,6 +63,8 @@ let excludeSelf = false
 let milestones = []
 let editingDateId = null
 let addingDate = false
+let drag = null
+let autoScrollTimer = null
 
 function showError(msg) {
   errorEl.textContent = msg ?? ''
@@ -473,10 +480,16 @@ function renderWeek() {
   })
 
   const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
-  for (const s of teamSessions) {
+  // While dragging, the live preview stands in for the session being edited.
+  const preview = drag?.preview
+  const shown = preview
+    ? [...teamSessions.filter((s) => s.id !== preview.id), preview]
+    : teamSessions
+  for (const s of shown) {
     if (isAdmin && !enabledUsers.has(s.user_id)) continue
     const isRunning = s.ended_at === null
     const isMine = s.user_id === myUserId
+    const isPreview = s === preview
     const segments = splitSessionByDay(s, weekStart, weekEnd)
     for (const seg of segments) {
       const segDay = new Date(seg.start)
@@ -489,6 +502,7 @@ function renderWeek() {
       let cls = 'session-block'
       if (isRunning) cls += ' running'
       if (!isMine) cls += ' readonly'
+      if (isPreview) cls += ' dragging'
       block.className = cls
       block.style.top = `${topMin * PX_PER_MIN}px`
       block.style.height = `${Math.max(heightMin * PX_PER_MIN, 14)}px`
@@ -500,9 +514,25 @@ function renderWeek() {
       const fullEnd = s.ended_at ? sessionDateFmt.format(new Date(s.ended_at)) : 'running'
       block.title = `${who}${fullStart} → ${fullEnd}`
       const totalMs = (s.ended_at ? new Date(s.ended_at) : new Date()) - new Date(s.started_at)
+      const timeText = isPreview && s.ended_at
+        ? `${timeFmt.format(new Date(s.started_at))} – ${timeFmt.format(new Date(s.ended_at))}`
+        : timeFmt.format(new Date(s.started_at))
       block.innerHTML =
-        `<div class="block-time">${timeFmt.format(new Date(s.started_at))}</div>` +
+        `<div class="block-time">${timeText}</div>` +
         `<div class="block-dur">${formatElapsed(totalMs)}</div>`
+      if (isMine) {
+        // Only the segments holding the session's real start/end get handles
+        // (not edges clipped at midnight or at the week boundary).
+        if (seg.start.getTime() === new Date(s.started_at).getTime()) {
+          block.insertAdjacentHTML('beforeend', '<div class="resize-handle top" data-edge="start"></div>')
+        }
+        if (s.ended_at && seg.end.getTime() === new Date(s.ended_at).getTime()) {
+          block.insertAdjacentHTML('beforeend', '<div class="resize-handle bottom" data-edge="end"></div>')
+        }
+        if (!isRunning && s.id !== NEW_ID) {
+          block.insertAdjacentHTML('beforeend', '<button class="block-delete" title="Delete session">×</button>')
+        }
+      }
       dayColumns[dayIdx].appendChild(block)
     }
   }
@@ -542,12 +572,197 @@ weekPrevBtn.addEventListener('click', () => { weekOffset -= 1; renderWeek(); ren
 weekNextBtn.addEventListener('click', () => { weekOffset += 1; renderWeek(); renderTeamPie() })
 weekTodayBtn.addEventListener('click', () => { weekOffset = 0; renderWeek(); renderTeamPie() })
 
-weekBody.addEventListener('click', (e) => {
+// --- Week view direct manipulation -----------------------------------------
+// Click an empty slot to add a session (or drag to paint its range), drag a
+// block's top/bottom edge to change its start/end, drag the block itself to
+// move it, and click it to open it in the sessions table. Edits snap to
+// SNAP_MIN; holding Alt snaps to the minute.
+
+// Time under the pointer (unsnapped) in the currently shown week.
+function pointerTime(clientX, clientY) {
+  const cols = weekBody.querySelectorAll('.day-column')
+  let dayIdx = 0
+  cols.forEach((col, i) => { if (clientX >= col.getBoundingClientRect().left) dayIdx = i })
+  const y = clientY - weekBody.getBoundingClientRect().top
+  const minutes = Math.min(Math.max(y / PX_PER_MIN, 0), 24 * 60)
+  const d = weekStartDate()
+  d.setDate(d.getDate() + dayIdx)
+  d.setSeconds(Math.round(minutes * 60))
+  return d
+}
+
+function snapDate(date, stepMin, round = Math.round) {
+  const midnight = new Date(date)
+  midnight.setHours(0, 0, 0, 0)
+  const out = new Date(midnight)
+  out.setMinutes(round((date - midnight) / 60000 / stepMin) * stepMin)
+  return out
+}
+
+function updateDragPreview() {
+  const step = drag.fine ? 1 : SNAP_MIN
+  const t = pointerTime(drag.lastX, drag.lastY)
+  const s = drag.session
+  let start, end
+  if (drag.mode === 'create') {
+    const a = snapDate(drag.downTime, step)
+    const b = snapDate(t, step)
+    ;[start, end] = a <= b ? [a, b] : [b, a]
+    if (end - start < step * 60000) end = new Date(start.getTime() + step * 60000)
+  } else if (drag.mode === 'move') {
+    const origStart = new Date(s.started_at)
+    const duration = new Date(s.ended_at) - origStart
+    start = snapDate(new Date(origStart.getTime() + (t - drag.downTime)), step)
+    end = new Date(start.getTime() + duration)
+  } else if (drag.mode === 'resize-start') {
+    end = s.ended_at ? new Date(s.ended_at) : null
+    const latest = end ? end.getTime() - MIN_SESSION_MS : Date.now()
+    start = new Date(Math.min(snapDate(t, step).getTime(), latest))
+  } else if (drag.mode === 'resize-end') {
+    start = new Date(s.started_at)
+    end = new Date(Math.max(snapDate(t, step).getTime(), start.getTime() + MIN_SESSION_MS))
+  } else {
+    return // 'open' (running block body): dragging does nothing
+  }
+  drag.preview = {
+    id: s?.id ?? NEW_ID,
+    user_id: myUserId,
+    started_at: start.toISOString(),
+    ended_at: end ? end.toISOString() : null
+  }
+  renderWeek()
+}
+
+// Keep scrolling while the pointer rests near the top/bottom of the grid.
+function updateAutoScroll() {
+  stopAutoScroll()
+  const r = weekScroll.getBoundingClientRect()
+  const EDGE = 32
+  const dir = drag.lastY < r.top + EDGE ? -1 : drag.lastY > r.bottom - EDGE ? 1 : 0
+  if (!dir) return
+  autoScrollTimer = setInterval(() => {
+    weekScroll.scrollTop += dir * 8
+    if (drag?.moved) updateDragPreview()
+  }, 16)
+}
+
+function stopAutoScroll() {
+  clearInterval(autoScrollTimer)
+  autoScrollTimer = null
+}
+
+function endDrag() {
+  drag = null
+  stopAutoScroll()
+  delete document.body.dataset.weekDrag
+}
+
+async function saveWeekSession(p) {
+  showError('')
+  const isNew = p.id === NEW_ID
+  // Show the result right away; the reload swaps in the server's copy.
+  if (isNew) teamSessions = [p, ...teamSessions]
+  else Object.assign(teamSessions.find((x) => x.id === p.id), p)
+  renderWeek()
+  const patch = p.ended_at
+    ? { started_at: p.started_at, ended_at: p.ended_at }
+    : { started_at: p.started_at }
+  const { error } = isNew
+    ? await supabase.from('sessions').insert(patch)
+    : await supabase.from('sessions').update(patch).eq('id', p.id)
+  if (error) showError(error.message)
+  await loadSessions()
+}
+
+weekBody.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || drag) return
+  if (e.target.closest('.block-delete')) return // handled by the click listener
   const block = e.target.closest('.session-block')
-  if (!block) return
-  const id = block.dataset.id
-  const s = teamSessions.find((x) => x.id === id)
-  if (!s || s.user_id !== myUserId) return
+  let mode
+  let session = null
+  if (block) {
+    session = teamSessions.find((x) => x.id === block.dataset.id)
+    if (!session || session.user_id !== myUserId || session.id === NEW_ID) return
+    const edge = e.target.closest('.resize-handle')?.dataset.edge
+    mode = edge ? `resize-${edge}` : session.ended_at ? 'move' : 'open'
+  } else {
+    if (!e.target.closest('.day-column')) return
+    // Admin with "Me" toggled off wouldn't see the new session.
+    if (isAdmin && !enabledUsers.has(myUserId)) return
+    mode = 'create'
+  }
+  drag = {
+    mode, session,
+    pointerId: e.pointerId,
+    downX: e.clientX, downY: e.clientY,
+    lastX: e.clientX, lastY: e.clientY,
+    downTime: pointerTime(e.clientX, e.clientY),
+    fine: e.altKey,
+    moved: false,
+    preview: null
+  }
+  if (e.pointerType === 'mouse') e.preventDefault() // no text selection while dragging
+})
+
+window.addEventListener('pointermove', (e) => {
+  if (!drag || e.pointerId !== drag.pointerId) return
+  drag.lastX = e.clientX
+  drag.lastY = e.clientY
+  drag.fine = e.altKey
+  if (!drag.moved) {
+    if (Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < DRAG_THRESHOLD_PX) return
+    drag.moved = true
+    document.body.dataset.weekDrag = drag.mode
+  }
+  updateDragPreview()
+  updateAutoScroll()
+})
+
+window.addEventListener('pointerup', async (e) => {
+  if (!drag || e.pointerId !== drag.pointerId) return
+  const d = drag
+  endDrag()
+  if (d.moved) {
+    if (d.preview) await saveWeekSession(d.preview)
+    return
+  }
+  if (d.mode === 'create') {
+    const start = snapDate(d.downTime, SNAP_MIN, Math.floor)
+    const end = new Date(start.getTime() + DEFAULT_NEW_MIN * 60000)
+    await saveWeekSession({
+      id: NEW_ID, user_id: myUserId,
+      started_at: start.toISOString(), ended_at: end.toISOString()
+    })
+  } else {
+    openSessionEditor(d.session.id)
+  }
+})
+
+// Touch scrolling takes over the gesture → pointercancel; Escape aborts too.
+window.addEventListener('pointercancel', (e) => {
+  if (!drag || e.pointerId !== drag.pointerId) return
+  endDrag()
+  renderWeek()
+})
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !drag) return
+  endDrag()
+  renderWeek()
+})
+
+weekBody.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.block-delete')
+  if (!btn) return
+  const id = btn.closest('.session-block').dataset.id
+  if (!confirm('Delete this session?')) return
+  showError('')
+  const { error } = await supabase.from('sessions').delete().eq('id', id)
+  if (error) { showError(error.message); return }
+  if (editingId === id) editingId = null
+  await loadSessions()
+})
+
+function openSessionEditor(id) {
   editingId = id
   renderSessions()
   const row = sessionsBody.querySelector(`button[data-id="${id}"]`)?.closest('tr')
@@ -557,7 +772,7 @@ weekBody.addEventListener('click', (e) => {
     void row.offsetWidth // restart animation
     row.classList.add('flash')
   }
-})
+}
 
 function colorForUser(userId) {
   if (!isAdmin) return null
