@@ -323,6 +323,77 @@
       background: color-mix(in srgb, var(--block-color, var(--running-text)) 28%, transparent);
     }
     .session-block.readonly { cursor: default; }
+    .session-block:not(.readonly):not(.running) { cursor: grab; }
+    .session-block.dragging {
+      z-index: 3;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+      background: color-mix(in srgb, var(--block-color, var(--primary)) 32%, var(--surface));
+    }
+    .session-block.running.dragging {
+      background: color-mix(in srgb, var(--block-color, var(--running-text)) 28%, var(--surface));
+    }
+    .session-block .resize-handle {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 7px;
+      cursor: ns-resize;
+      touch-action: none; /* let touch drags resize instead of scrolling */
+      z-index: 1;
+    }
+    .session-block .resize-handle.top { top: -1px; }
+    .session-block .resize-handle.bottom { bottom: -1px; }
+    .session-block .resize-handle::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      width: 18px;
+      height: 3px;
+      margin-left: -9px;
+      border-radius: 2px;
+      background: currentColor;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+    .session-block .resize-handle.top::after { top: 1px; }
+    .session-block .resize-handle.bottom::after { bottom: 1px; }
+    .session-block:hover .resize-handle::after,
+    .session-block.dragging .resize-handle::after { opacity: 0.45; }
+    .session-block .resize-handle:hover::after { opacity: 1; }
+    .session-block .block-delete {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      z-index: 2;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border: none;
+      border-radius: 3px;
+      background: transparent;
+      color: inherit;
+      font-size: 12px;
+      line-height: 14px;
+      text-align: center;
+      opacity: 0;
+    }
+    .session-block:hover .block-delete { opacity: 0.7; }
+    .session-block .block-delete:hover:not(:disabled) {
+      opacity: 1;
+      border: none;
+      background: color-mix(in srgb, currentColor 20%, transparent);
+      color: inherit;
+    }
+    .session-block.dragging .block-delete { display: none; }
+    body[data-week-drag] * { user-select: none; }
+    body[data-week-drag="create"] *,
+    body[data-week-drag^="resize"] * { cursor: ns-resize !important; }
+    body[data-week-drag="move"] * { cursor: grabbing !important; }
+    .week-hint {
+      margin: 0.5rem 0 0;
+      color: var(--text-subtle);
+      font-size: 0.78rem;
+    }
 
     .team-toggles {
       display: flex;
@@ -609,6 +680,7 @@
           <div class="week-body" id="week-body"></div>
         </div>
       </div>
+      <p class="week-hint">Click or drag on the grid to add a session · drag a session's top/bottom edge to change its start/end · drag it to move · hold Alt for 1-minute precision</p>
     </div>
 
     <div class="card" id="team-stats-card" hidden>
